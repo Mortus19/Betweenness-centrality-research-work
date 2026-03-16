@@ -107,6 +107,7 @@ struct Graph {
     }
 };
 
+
 int main() {
     vector<string> graphPaths = {
         "../Graphs/cage3.mtx",

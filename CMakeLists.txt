@@ -12,14 +12,16 @@ add_library(grAlgoLib STATIC
         include/matrix_utils.h
         include/betweenness_centrality.h
         include/mmio.h
+        include/Graph.h
         src/mmio.cpp)
 
 target_include_directories(grAlgoLib PUBLIC include)
 
 add_executable(grAlgo ${SOURCE_EXE})
-
 target_link_libraries(grAlgo PUBLIC grAlgoLib)
 
 add_executable(my src/main.cpp)
-
 target_link_libraries(my PUBLIC grAlgoLib)
+
+add_executable(parseAsData src/parseAsData.cpp)
+target_link_libraries(parseAsData PUBLIC grAlgoLib)

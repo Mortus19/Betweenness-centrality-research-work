@@ -20,8 +20,12 @@ target_include_directories(grAlgoLib PUBLIC include)
 add_executable(grAlgo ${SOURCE_EXE})
 target_link_libraries(grAlgo PUBLIC grAlgoLib)
 
-add_executable(my src/main.cpp)
-target_link_libraries(my PUBLIC grAlgoLib)
+add_executable(TBC-base src/TBC-base.cpp)
+target_link_libraries(TBC-base PUBLIC grAlgoLib)
 
-add_executable(parseAsData src/parseAsData.cpp)
-target_link_libraries(parseAsData PUBLIC grAlgoLib)
+add_executable(TBC-optimized-only-vertex src/TBC-optimized-only-vertex.cpp)
+target_link_libraries(optimized PUBLIC grAlgoLib)
+
+add_executable(TBC-optimized-all src/TBC-optimized-all.cpp)
+target_link_libraries(optimized PUBLIC grAlgoLib)
+

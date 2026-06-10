@@ -1,0 +1,19 @@
+Freeman 1977 +
+Brandes 2001 +
+Abboud et al. +-
+ABRA
+KADABRA
+Tsalouchidou 2020
+Buß et al.
+ONBRA
+Zhang et al. 2024
+MANTRA
+Brunelli 2025
+Уже потом: Bavarian / SILVAN / MPI-scaling / GNN / group-centrality.
+
+основа — Freeman, Brandes;
+пределы exact — Abboud;
+современная статика — ABRA, KADABRA, Bavarian, SILVAN;
+dynamic — Hayashi;
+temporal frontier — Buß, ONBRA, Zhang, MANTRA, Brunelli;
+боковые ветки — Newman random-walk, group centrality, GNN.

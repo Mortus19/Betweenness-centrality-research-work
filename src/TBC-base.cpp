@@ -197,17 +197,17 @@ void processedDynamic(string filename) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        cout << "No filename for launch" << endl;
-        return 0;
-    }
-    string filename = argv[1];
+    // if (argc < 2) {
+    //     cout << "No filename for launch" << endl;
+    //     return 0;
+    // }
+    // string filename = argv[1];
 
-    // vector<string> filenameData = {
-    //     "../Graphs/Temporary/1_06_college_msg.patg",
-    //     "../Graphs/Temporary/1_02_hospital_ward.patg",
-    // };
-
+    vector<string> filenameData = {
+        "../Graphs/Temporary/1_06_college_msg.patg",
+        "../Graphs/Temporary/1_02_hospital_ward.patg",
+    };
+    string filename = filenameData[0];
     processedDynamic(filename);
 
     return 0;

@@ -5,23 +5,16 @@ using namespace std;
 #define sz(x) (int)x.size()
 #define debug(x) cerr << __LINE__ << ": " << #x << " = " << (x) << endl
 
-// Reduce simple segment time [l, r]
-struct vertexInfo {
-    int instance, timeL;
-
-    vertexInfo(int _intstance = 1, int _l = 0) {
-        instance = _intstance;
-        timeL = _l;
-    }
-};
-
-vector<vertexInfo> vertexData;
+vector<int> duplicate;
 vector<vector<int>> reducedTimes;
 
 vector<vector<int>> temporalGraph;
 vector<vector<int>> reversedTemporalGraph;
 
+vector<int> vToCompressed, compressedTov;
+
 vector<vector<int>> g;
+vector<vector<int>> rg;
 
 vector<vector<pair<int, int>>> vertexAllTimes; //для вершины храним {время входа, индекс в графе}
 
@@ -44,14 +37,7 @@ void bfs(int v, vector<double> &BC) {
     delta.assign(n, 0); sigma.assign(n, 0); weights.assign(n, 0);
     parents.assign(n, {});
 
-    int startv = -1;
-    for (auto id : reducedTimes[v]) {
-        if (vertexData[id].timeL == MIN_TIME) {
-            startv = id;
-        } else {
-            blocked[id] = 1;
-        }
-    }
+    int startv = reducedTimes[v][0];
     dist[startv] = 0;
     delta[startv] = 0;
     sigma[startv] = 1;
@@ -62,7 +48,7 @@ void bfs(int v, vector<double> &BC) {
         int x = q.front();
         order.push_back(x);
         q.pop();
-        double waysX = sigma[x] * vertexData[x].instance;
+        double waysX = sigma[x] * duplicate[x];
         for (auto y : g[x]) {
             if (blocked[y]) continue;
             if (dist[y] > dist[x] + 1) {
@@ -90,7 +76,7 @@ void bfs(int v, vector<double> &BC) {
         for (auto num : reducedTimes[i]) {
             if (dist[num] == mindist) {
                 marked[num] = 1;
-                w += sigma[num] * vertexData[num].instance;
+                w += sigma[num] * duplicate[num];
             }
         }
         for (auto num : reducedTimes[i]) {
@@ -103,9 +89,9 @@ void bfs(int v, vector<double> &BC) {
     for (int i = sz(order) - 1; i >= 0; i--) {
         int x = order[i];
         for (auto y : parents[x]) {
-            delta[y] += vertexData[y].instance * (sigma[y] / sigma[x]) * delta[x];
+            delta[y] += duplicate[y] * (sigma[y] / sigma[x]) * delta[x];
             if (marked[x]) {
-                delta[y] += vertexData[x].instance * vertexData[y].instance * (sigma[y] / weights[x]);
+                delta[y] += duplicate[x] * duplicate[y] * (sigma[y] / weights[x]);
             }
         }
     }
@@ -156,6 +142,8 @@ void processedDynamic(string filename) {
         id_time.push_back(edge[2]);
         edges.push_back(edge);
     }
+
+    auto start = chrono::steady_clock::now();
     id_time.push_back(MIN_TIME);
     id_time.push_back(MAX_TIME);
     sort(all(id_vertex));
@@ -206,7 +194,6 @@ void processedDynamic(string filename) {
             if (t1 >= t) continue;
             // cerr << x << ' ' << y << ' ' << t1 << '\n';
             temporalGraph[id_x].push_back(idy);
-            reversedTemporalGraph[idy].push_back(id_x);
             numberEdges++;
         }
     }
@@ -214,56 +201,73 @@ void processedDynamic(string filename) {
         sort(all(vec));
         vec.resize(unique(all(vec)) - vec.begin());
     }
-    for (auto &vec : reversedTemporalGraph) {
-        sort(all(vec));
-        vec.resize(unique(all(vec)) - vec.begin());
+    for (int i = 0; i < sz(temporalGraph); i++) {
+        for (auto y : temporalGraph[i]) {
+            reversedTemporalGraph[y].push_back(i);
+        }
     }
     int reduceN = 0;
     int reduceE = 0;
     reducedTimes.resize(n);
-    map<pair<int, int>, int> index;
+    vToCompressed.resize(N);
+
     for (int i = 0; i < n; i++) {
+        // TODO add Hash-s
         map<pair<vector<int>, vector<int>>, vector<int>> eqls;
         for (auto [t, idx] : vertexAllTimes[i]) {
-            if (t == MIN_TIME) continue;
-            eqls[{temporalGraph[idx], reversedTemporalGraph[idx]}].push_back(t);
+            if (t == MIN_TIME) {
+                continue;
+            }
+            eqls[{temporalGraph[idx], reversedTemporalGraph[idx]}].push_back(idx);
         }
-        index[{i, MIN_TIME}] = reduceN;
-        vertexData.push_back({1, MIN_TIME});
+        int startId = vertexAllTimes[i][0].second;
+
+        vToCompressed[startId] = reduceN;
         reducedTimes[i].push_back(reduceN);
+        compressedTov.push_back(i);
+        duplicate.push_back(1);
         reduceN++;
 
-        for (auto [gr, ts] : eqls) {
-            for (auto t : ts) {
-                index[{i, t}] = reduceN;
+        for (auto& [gr, ids] : eqls) {
+            for (int idx : ids) {
+                vToCompressed[idx] = reduceN;
             }
-            vertexData.push_back(vertexInfo(sz(ts), ts[0]));
+
             reducedTimes[i].push_back(reduceN);
+            compressedTov.push_back(i);
+            duplicate.push_back(sz(ids));
+
             reduceN++;
         }
     }
-
-    map<pair<int, int>, int> wasEdge;
     g.resize(reduceN);
-    for (auto [x, y, t] : edges) {
-        // проводим для всех вершин ребра
-        int idy = index[{y, t}];
-        for (auto idx : reducedTimes[x]) {
-            if (vertexData[idx].timeL < t && wasEdge.count({idy, idx}) == 0) {
-                g[idx].push_back(idy);
-                wasEdge[{idy, idx}] = 1;
-                reduceE++;
-            }
+    rg.resize(reduceN);
+    for (int i = 0; i < sz(temporalGraph); i++) {
+        for (auto y : temporalGraph[i]) {
+            if (vToCompressed[i] == vToCompressed[y]) continue;
+            g[vToCompressed[i]].push_back(vToCompressed[y]);
         }
     }
+    for (int i = 0; i < sz(g); i++) {
+        sort(all(g[i]));
+        g[i].resize(unique(all(g[i])) - g[i].begin());
+        reduceE += sz(g[i]);
+    }
+    for (int i = 0; i < sz(g); i++) {
+        for (auto y : g[i]) {
+            rg[y].push_back(i);
+        }
+    }
+
+    // cerr << N << ' ' << numberEdges << '\n';
     cout << "version vertex only optimize" << endl;
     cout << "reduced vertex graph :" << reduceN << endl;
     cout << "reduced edge graph :" << reduceE << endl;
-    auto start = chrono::steady_clock::now();
+    // return;
     vector<double> BC = calcBC();
     auto finish = chrono::steady_clock::now();
-    setprecision(6);
     cout << fixed << "Time in second : " << std::chrono::duration<double>(finish - start).count() << '\n';
+    setprecision(6);
 }
 
 int main(int argc, char* argv[]) {

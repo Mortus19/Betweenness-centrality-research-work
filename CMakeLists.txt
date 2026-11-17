@@ -13,6 +13,8 @@ add_library(grAlgoLib STATIC
         include/betweenness_centrality.h
         include/mmio.h
         include/Graph.h
+        include/StatisticTools.h
+        src/StatisticTools.cpp
         src/mmio.cpp)
 
 target_include_directories(grAlgoLib PUBLIC include)
@@ -24,8 +26,22 @@ add_executable(TBC-base src/TBC-base.cpp)
 target_link_libraries(TBC-base PUBLIC grAlgoLib)
 
 add_executable(TBC-optimized-only-vertex src/TBC-optimized-only-vertex.cpp)
-target_link_libraries(optimized PUBLIC grAlgoLib)
+target_link_libraries(TBC-optimized-only-vertex PUBLIC grAlgoLib)
 
 add_executable(TBC-optimized-all src/TBC-optimized-all.cpp)
-target_link_libraries(optimized PUBLIC grAlgoLib)
+target_link_libraries(TBC-optimized-all PUBLIC grAlgoLib)
 
+add_executable(TBC-uniform-source-sampling src/TBC-uniform-source-sampling.cpp)
+target_link_libraries(TBC-uniform-source-sampling PUBLIC grAlgoLib)
+
+add_executable(TBC-probability-source-sampling src/TBC-probability-source-sampling.cpp)
+target_link_libraries(TBC-probability-source-sampling PUBLIC grAlgoLib)
+
+add_executable(TBC-uniform-path-sampling src/TBC-uniform-path-sampling.cpp)
+target_link_libraries(TBC-uniform-path-sampling PUBLIC grAlgoLib)
+
+add_executable(TBC-uniform-path-sampling-optimazed src/TBC-uniform-path-sampling-optimazed.cpp)
+target_link_libraries(TBC-uniform-path-sampling-optimazed PUBLIC grAlgoLib)
+
+add_executable(TBC-uniform-path-sampling-optimized-vertex src/TBC-uniform-path-sampling-optimized-vertex.cpp)
+target_link_libraries(TBC-uniform-path-sampling-optimized-vertex PUBLIC grAlgoLib)

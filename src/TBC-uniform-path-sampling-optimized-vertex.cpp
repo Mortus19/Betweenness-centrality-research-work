@@ -511,7 +511,7 @@ void processedDynamic(string filename, int k, int threads) {
 int main(int argc, char* argv[]) {
     string filename = "";
     int k, threads;
-    if (argc < 3) {
+    if (argc < 4) {
         threads = 6;
         k = 100000;
         filename = "../Graphs/Temporary/1_06_college_msg.patg";

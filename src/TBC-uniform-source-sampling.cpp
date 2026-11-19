@@ -1,3 +1,5 @@
+#include <omp.h>
+
 #include "StatisticTools.h"
 
 vector<vector<int>> temporalGraph;
@@ -99,9 +101,24 @@ vector<double> calcBC(bool normalize = false, int k = 1, int threads = 1) {
     iota(order.begin(), order.end(), 0);
     mt19937_64 rng(random_device{}());
     shuffle(order.begin(), order.end(), rng);
-#pragma omp parallel for num_threads(threads)
-    for (int i = 0; i < k; i++) {
-        bfs(order[i], BC, coef);
+
+    vector<vector<double>> partialBC(
+        threads, vector<double>(n, 0.0)
+    );
+#pragma omp parallel num_threads(threads)
+    {
+        int tid = omp_get_thread_num();
+
+#pragma omp for schedule(dynamic)
+        for (int i = 0; i < k; i++) {
+            bfs(order[i], partialBC[tid], coef);
+        }
+    }
+
+    for (int tid = 0; tid < threads; tid++) {
+        for (int i = 0; i < n; i++) {
+            BC[i] += partialBC[tid][i];
+        }
     }
     if (normalize) {
         for (int i = 0; i < n; i++) {
@@ -204,23 +221,26 @@ void processedDynamic(string filename, int k, int threads = 1) {
     }
 
     auto start = chrono::steady_clock::now();
-    vector<double> approximateBC = calcBC(1, k, threads);
+    vector<double> approximateBC = calcBC(true, k, threads);
     auto finish = chrono::steady_clock::now();
     double peakRAM = Statistic::getPeakRAM();
     vector<double> exactBC = calcExactBC(true, threads);
-    Statistic::getAllStatistic(filename, threads, exactBC, approximateBC, peakRAM, std::chrono::duration<double>(finish - start).count(), k);
+    string nameAlgo = "TBC-uniform-source-sampling";
+    Statistic::getAllStatistic(filename, nameAlgo, threads, exactBC, approximateBC, peakRAM, std::chrono::duration<double>(finish - start).count(), k);
 
 }
 
 int main(int argc, char* argv[]) {
     string filename = "";
-    int k, threads = 1;
-    if (argc < 3) {
+    int k, threads;
+    if (argc < 4) {
+        threads = 6;
+        k = 100;
         filename = "../Graphs/Temporary/1_06_college_msg.patg";
-        k = 500;
     } else {
         filename = argv[1];
         k = stoi(argv[2]);
+        threads = stoi(argv[3]);
     }
     processedDynamic(filename, k, threads);
     return 0;

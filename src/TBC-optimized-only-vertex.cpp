@@ -1,9 +1,6 @@
-#include <bits/stdc++.h>
-using namespace std;
+#include <omp.h>
 
-#define all(x) x.begin(), x.end()
-#define sz(x) (int)x.size()
-#define debug(x) cerr << __LINE__ << ": " << #x << " = " << (x) << endl
+#include "StatisticTools.h"
 
 vector<int> duplicate;
 vector<vector<int>> reducedTimes;
@@ -23,19 +20,14 @@ constexpr int MAX_TIME = 1e9;
 
 constexpr int INF = 1e9;
 
-vector<int> dist;
-
-vector<int> order, marked, blocked;
-vector<double> delta, sigma, weights;
-vector<vector<int>> parents;
-
 void bfs(int v, vector<double> &BC) {
     int n = sz(g);
-    dist.assign(n, INF);
-    order.clear();
-    marked.assign(n, 0); blocked.assign(n, 0);
-    delta.assign(n, 0); sigma.assign(n, 0); weights.assign(n, 0);
-    parents.assign(n, {});
+
+    vector<int> dist(n, INF);
+    vector<int> order;
+    vector<int> marked(n, 0), blocked(n, 0);
+    vector<double> delta(n, 0), sigma(n, 0), weights(n, 0);
+    vector<vector<int>> parents(n);
 
     int startv = reducedTimes[v][0];
     dist[startv] = 0;
@@ -105,12 +97,31 @@ void bfs(int v, vector<double> &BC) {
     }
 }
 
-vector<double> calcBC(bool normalize = false) {
+vector<double> calcBC(bool normalize = false, int threads = 1) {
     int n = sz(vertexAllTimes);
-    vector<double> BC(n, 0);
-    for (int i = 0; i < n; i++) {
-        bfs(i, BC);
+    vector<vector<double>> partialBC(
+        threads, vector<double>(n, 0.0)
+    );
+
+#pragma omp parallel num_threads(threads)
+    {
+        int tid = omp_get_thread_num();
+
+#pragma omp for schedule(dynamic)
+        for (int i = 0; i < n; i++) {
+            bfs(i, partialBC[tid]);
+        }
     }
+
+    vector<double> BC(n, 0.0);
+
+    for (int tid = 0; tid < threads; tid++) {
+        for (int i = 0; i < n; i++) {
+            BC[i] += partialBC[tid][i];
+        }
+    }
+
+
     if (normalize) {
         for (int i = 0; i < n; i++) {
             double coef = 1.0 / ((double)(n) * (n - 1));
@@ -120,7 +131,7 @@ vector<double> calcBC(bool normalize = false) {
     return BC;
 }
 
-void processedDynamic(string filename) {
+void processedDynamic(string filename, int threads = 1) {
     ifstream in(filename);
     string line;
     getline(in, line);
@@ -143,7 +154,6 @@ void processedDynamic(string filename) {
         edges.push_back(edge);
     }
 
-    auto start = chrono::steady_clock::now();
     id_time.push_back(MIN_TIME);
     id_time.push_back(MAX_TIME);
     sort(all(id_vertex));
@@ -258,31 +268,24 @@ void processedDynamic(string filename) {
             rg[y].push_back(i);
         }
     }
-
-    // cerr << N << ' ' << numberEdges << '\n';
-    cout << "version vertex only optimize" << endl;
-    cout << "reduced vertex graph :" << reduceN << endl;
-    cout << "reduced edge graph :" << reduceE << endl;
-    // return;
-    vector<double> BC = calcBC();
+    auto start = chrono::steady_clock::now();
+    vector<double> BC = calcBC(true, threads);
     auto finish = chrono::steady_clock::now();
-    cout << fixed << "Time in second : " << std::chrono::duration<double>(finish - start).count() << '\n';
-    setprecision(6);
+    double peakRAM = Statistic::getPeakRAM();
+    string nameAlgo = "TBC-optimized-only-vertex";
+    Statistic::getAllStatistic(filename, nameAlgo, threads, peakRAM, std::chrono::duration<double>(finish - start).count());
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        cout << "No filename for launch" << endl;
-        return 0;
+    string filename;
+    int threads = 1;
+    if (argc < 3) {
+        threads = 4;
+        filename = "../Graphs/Temporary/1_06_college_msg.patg";
+    } else {
+        threads = atoi(argv[1]);
+        filename = argv[2];
     }
-    string filename = argv[1];
-
-    // vector<string> filenameData = {
-    //     "../Graphs/Temporary/1_06_college_msg.patg",
-    //     "../Graphs/Temporary/1_02_hospital_ward.patg",
-    // };
-
-    processedDynamic(filename);
-
+    processedDynamic(filename, threads);
     return 0;
 }

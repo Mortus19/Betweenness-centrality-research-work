@@ -77,12 +77,13 @@ double getPeakRAM() {
     return pmc.PeakWorkingSetSize / (1024.0 * 1024.0);
 }
 
-void getAllStatistic(string filename, vector<double> &exactBC, vector<double> &approximateBC, double RAM, double time, int k)
+void getAllStatistic(string filename, string nameAlgo, int threads, vector<double> &exactBC, vector<double> &approximateBC, double RAM, double time, int k)
 {
     cout << fixed << setprecision(6);
-
+    cout << "Algo                : " << nameAlgo << '\n';
     cout << "Dataset             : " << filesystem::path(filename).filename().string() << '\n';
     cout << "\n========== TBC STATISTICS ==========\n";
+    cout << "Threads             : : " << threads << '\n';
     cout << "Samples (K)         : " << k << '\n';
     cout << "Execution time (s)  : " << time << '\n';
     cout << "Peak RAM (MiB)      : " << RAM << '\n';
@@ -110,6 +111,17 @@ void getAllStatistic(string filename, vector<double> &exactBC, vector<double> &a
     }
 
     cout << "====================================\n";
+}
+
+void getAllStatistic(string filename, string nameAlgo, int threads, double RAM, double time) {
+    cout << fixed << setprecision(6);
+    cout << "Algo                : " << nameAlgo << '\n';
+    cout << "Dataset             : " << filesystem::path(filename).filename().string() << '\n';
+    cout << "\n========== TBC STATISTICS ==========\n";
+    cout << "Threads             : : " << threads << '\n';
+    cout << "Execution time (s)  : " << time << '\n';
+    cout << "Peak RAM (MiB)      : " << RAM << '\n';
+
 }
 
 }

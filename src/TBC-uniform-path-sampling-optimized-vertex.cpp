@@ -1,3 +1,5 @@
+#include <omp.h>
+
 #include "StatisticTools.h"
 
 vector<int> duplicate;
@@ -17,12 +19,6 @@ constexpr int MIN_TIME = 0;
 constexpr int MAX_TIME = 1e9;
 
 constexpr int INF = 1e9;
-
-vector<int> dist;
-
-vector<int> order, marked, blocked;
-vector<double> delta, sigma, weights;
-vector<vector<int>> parents;
 
 struct BfsData {
     int depth, start;
@@ -90,9 +86,8 @@ void expandLayer(BfsData &data, vector<vector<int>> &graph, vector<int> &otherDi
     swap(nlayer, data.layerVertex);
 }
 
-BfsData source, finish;
 
-void uniformPathSampling(int s, int t, int c, vector<double>& BC, mt19937_64& rng) {
+void uniformPathSampling(BfsData &source, BfsData &finish, int s, int t, int c, vector<double>& BC, mt19937_64& rng) {
     int sourceState = reducedTimes[s][0];
 
     if (source.start != sourceState) {
@@ -179,7 +174,7 @@ void uniformPathSampling(int s, int t, int c, vector<double>& BC, mt19937_64& rn
     }
 }
 
-vector<double> calcBC(int k = 1) {
+vector<double> calcBC(int k = 1, int threads = 1) {
     int n = sz(vertexAllTimes);
     vector<double> BC(n, 0);
     mt19937_64 rng(random_device{}());
@@ -207,26 +202,64 @@ vector<double> calcBC(int k = 1) {
         }
         quer.push_back({q.back().first, q.back().second, cnt});
     }
-    source = BfsData(sz(g));
-    finish = BfsData(sz(rg));
-    for (auto [s, t, c] : quer) {
-        uniformPathSampling(s, t, c, BC, rng);
+
+    vector<pair<int, int>> batches;
+
+    for (int i = 0; i < sz(quer); ) {
+        int j = i + 1;
+
+        while (j < sz(quer) && quer[j][0] == quer[i][0])
+            j++;
+
+        batches.push_back({i, j});
+        i = j;
+    }
+
+    vector<vector<double>> partialBC(threads, vector<double>(n, 0.0));
+
+#pragma omp parallel num_threads(threads)
+    {
+        int tid = omp_get_thread_num();
+
+        BfsData source(sz(g));
+        BfsData finish(sz(rg));
+
+#pragma omp for schedule(dynamic)
+        for (int b = 0; b < sz(batches); b++) {
+            auto [l, r] = batches[b];
+
+            int s = quer[l][0];
+
+            mt19937_64 rng(random_device{}());
+
+            for (int i = l; i < r; i++) {
+                auto [s, t, c] = quer[i];
+                uniformPathSampling(source, finish, s, t, c,partialBC[tid], rng);
+            }
+        }
+    }
+
+    for (int tid = 0; tid < threads; tid++) {
+        for (int i = 0; i < n; i++) {
+            BC[i] += partialBC[tid][i];
+        }
     }
 
     for (int i = 0; i < n; i++) {
-        BC[i] /= (double)k;
+        BC[i] /= double(k);
     }
-
     return BC;
 }
 
 void bfs(int v, vector<double> &BC) {
+
     int n = sz(g);
-    dist.assign(n, INF);
-    order.clear();
-    marked.assign(n, 0); blocked.assign(n, 0);
-    delta.assign(n, 0); sigma.assign(n, 0); weights.assign(n, 0);
-    parents.assign(n, {});
+
+    vector<int> dist(n, INF);
+    vector<int> order;
+    vector<int> marked(n, 0), blocked(n, 0);
+    vector<double> delta(n, 0), sigma(n, 0), weights(n, 0);
+    vector<vector<int>> parents(n);
 
     int startv = reducedTimes[v][0];
     dist[startv] = 0;
@@ -296,12 +329,30 @@ void bfs(int v, vector<double> &BC) {
     }
 }
 
-vector<double> calcExactBC(bool normalize = false) {
+vector<double> calcExactBC(bool normalize = false, int threads = 1) {
     int n = sz(vertexAllTimes);
-    vector<double> BC(n, 0);
-    for (int i = 0; i < n; i++) {
-        bfs(i, BC);
+    vector<vector<double>> partialBC(
+        threads, vector<double>(n, 0.0)
+    );
+
+#pragma omp parallel num_threads(threads)
+    {
+        int tid = omp_get_thread_num();
+
+#pragma omp for schedule(dynamic)
+        for (int i = 0; i < n; i++) {
+            bfs(i, partialBC[tid]);
+        }
     }
+
+    vector<double> BC(n, 0.0);
+
+    for (int tid = 0; tid < threads; tid++) {
+        for (int i = 0; i < n; i++) {
+            BC[i] += partialBC[tid][i];
+        }
+    }
+
     if (normalize) {
         for (int i = 0; i < n; i++) {
             double coef = 1.0 / ((double)(n) * (n - 1));
@@ -311,7 +362,7 @@ vector<double> calcExactBC(bool normalize = false) {
     return BC;
 }
 
-void processedDynamic(string filename, int k) {
+void processedDynamic(string filename, int k, int threads) {
     ifstream in(filename);
     string line;
     getline(in, line);
@@ -449,25 +500,26 @@ void processedDynamic(string filename, int k) {
         }
     }
     auto start = chrono::steady_clock::now();
-    vector<double> approximateBC = calcBC(k);
+    vector<double> approximateBC = calcBC(k, threads);
     auto finish = chrono::steady_clock::now();
     double peakRAM = Statistic::getPeakRAM();
-    vector<double> exactBC = calcExactBC(true);
-    Statistic::getAllStatistic(filename, exactBC, approximateBC, peakRAM, std::chrono::duration<double>(finish - start).count(), k);
+    vector<double> exactBC = calcExactBC(true, threads);
+    string nameAlgo = "TBC-uniform-path-sampling-optimized-vertex";
+    Statistic::getAllStatistic(filename, nameAlgo, threads, exactBC, approximateBC, peakRAM, std::chrono::duration<double>(finish - start).count(), k);
 }
 
 int main(int argc, char* argv[]) {
     string filename = "";
-    int k;
+    int k, threads;
     if (argc < 3) {
+        threads = 6;
+        k = 100000;
         filename = "../Graphs/Temporary/1_06_college_msg.patg";
-        // filename = "../Graphs/Temporary/mytest.patg";
-        k = 100'000;
     } else {
         filename = argv[1];
         k = stoi(argv[2]);
+        threads = stoi(argv[3]);
     }
-    processedDynamic(filename, k);
-
+    processedDynamic(filename, k, threads);
     return 0;
 }

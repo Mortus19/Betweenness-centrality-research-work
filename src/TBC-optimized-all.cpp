@@ -1,9 +1,6 @@
-#include <bits/stdc++.h>
-using namespace std;
+#include <omp.h>
 
-#define all(x) x.begin(), x.end()
-#define sz(x) (int)x.size()
-#define debug(x) cerr << __LINE__ << ": " << #x << " = " << (x) << endl
+#include  "StatisticTools.h"
 
 // Reduce simple segment time [l, r]
 struct vertexInfo {
@@ -105,14 +102,15 @@ vector<int> buildProcessingOrder(const vector<int> &dist, const vector<int> &blo
     return order;
 }
 
-vector<int> order, marked, blocked, dist;
-vector<double> bcLocal, propagate, delta, sigma, endSigma, weights;
-vector<vector<pair<int, int>>> parents;
-deque<int> q;
-
 void bfs(int v, vector<double> &BC) {
 
     int n = sz(g);
+
+    vector<int> order, marked, blocked, dist;
+    vector<double> bcLocal, propagate, delta, sigma, endSigma, weights;
+    vector<vector<pair<int, int>>> parents;
+    deque<int> q;
+
     dist.assign(n, INF);
     order.clear();
     marked.assign(n, 0); blocked.assign(n, 0);
@@ -256,15 +254,36 @@ void bfs(int v, vector<double> &BC) {
     }
 }
 
-vector<double> calcBC(bool normalize = false) {
+vector<double> calcBC(bool normalize = false, int threads = 1) {
     int n = sz(vertexAllTimes);
-    vector<double> BC(n, 0);
-    for (int i = 0; i < n; i++) {
-        bfs(i, BC);
-    }
-    if (normalize) {
+
+
+    vector<vector<double>> partialBC(
+        threads, vector<double>(n, 0.0)
+    );
+
+    #pragma omp parallel num_threads(threads)
+    {
+        int tid = omp_get_thread_num();
+
+        #pragma omp for schedule(dynamic)
         for (int i = 0; i < n; i++) {
-            double coef = 1.0 / ((double)(n) * (n - 1));
+            bfs(i, partialBC[tid]);
+        }
+    }
+
+    vector<double> BC(n, 0.0);
+
+    for (int tid = 0; tid < threads; tid++) {
+        for (int i = 0; i < n; i++) {
+            BC[i] += partialBC[tid][i];
+        }
+    }
+
+    if (normalize) {
+        double coef = 1.0 / (double(n) * (n - 1));
+
+        for (int i = 0; i < n; i++) {
             BC[i] *= coef;
         }
     }
@@ -272,7 +291,7 @@ vector<double> calcBC(bool normalize = false) {
 }
 
 
-void processedDynamic(string filename) {
+void processedDynamic(string filename, int threads = 1) {
     ifstream in(filename);
     string line;
     getline(in, line);
@@ -430,29 +449,25 @@ void processedDynamic(string filename) {
         reduceE++;
     }
     buildZeroTopoOrder();
-    cout << "version all optimizes" << endl;
-    cout << "reduced vertex graph :" << reduceN << endl;
-    cout << "reduced edge graph :" << reduceE << endl;
+
     auto start = chrono::steady_clock::now();
-    vector<double> BC = calcBC();
+    vector<double> BC = calcBC(true, threads);
     auto finish = chrono::steady_clock::now();
-    setprecision(6);
-    cout << fixed << "Time in second : " << std::chrono::duration<double>(finish - start).count() << '\n';
+    double peakRAM = Statistic::getPeakRAM();
+    string nameAlgo = "TBC-optimized-vertex-and-edges";
+    Statistic::getAllStatistic(filename, nameAlgo, threads, peakRAM, std::chrono::duration<double>(finish - start).count());
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        cout << "No filename for launch" << endl;
-        return 0;
+    string filename;
+    int threads = 1;
+    if (argc < 3) {
+        threads = 4;
+        filename = "../Graphs/Temporary/1_06_college_msg.patg";
+    } else {
+        threads = atoi(argv[1]);
+        filename = argv[2];
     }
-    string filename = argv[1];
-
-    // vector<string> filenameData = {
-    //     "../Graphs/Temporary/1_06_college_msg.patg",
-    //     "../Graphs/Temporary/1_02_hospital_ward.patg",
-    // };
-
-    processedDynamic(filename);
-
+    processedDynamic(filename, threads);
     return 0;
 }

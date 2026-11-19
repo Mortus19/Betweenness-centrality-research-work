@@ -1,4 +1,7 @@
+#include <omp.h>
 #include <bits/stdc++.h>
+
+#include "StatisticTools.h"
 using namespace std;
 
 #define all(x) x.begin(), x.end()
@@ -77,9 +80,7 @@ void expandLayer(BfsData &data, vector<vector<int>> &graph, vector<int> &otherDi
     swap(nlayer, data.layerVertex);
 }
 
-BfsData source, finish;
-
-void uniformPathSampling(int s, int t, int c, vector<double>& BC, mt19937_64& rng) {
+void uniformPathSampling(BfsData& source, BfsData& finish, int s, int t, int c, vector<double>& BC, mt19937_64& rng) {
     int sourceState = s;
     for (auto [time, id] : vertexAllTimes[s]) {
         if (time == MIN_TIME) {
@@ -174,10 +175,10 @@ void uniformPathSampling(int s, int t, int c, vector<double>& BC, mt19937_64& rn
 
 }
 
-vector<double> calcBC(int k = 1) {
+vector<double> calcBC(int k = 1, int threads = 1) {
     int n = sz(vertexAllTimes);
     vector<double> BC(n, 0);
-    mt19937_64 rng(42);
+    mt19937_64 rng(random_device{}());
     vector<array<int, 3>> quer;
     {
         uniform_int_distribution<int> dis(0, n - 1);
@@ -202,14 +203,50 @@ vector<double> calcBC(int k = 1) {
         }
         quer.push_back({q.back().first, q.back().second, cnt});
     }
-    source = BfsData(sz(temporalGraph));
-    finish = BfsData(sz(reverseTemporalGraph));
-    for (auto [s, t, c] : quer) {
-        uniformPathSampling(s, t, c, BC, rng);
+
+    vector<pair<int, int>> batches;
+
+    for (int i = 0; i < sz(quer); ) {
+        int j = i + 1;
+
+        while (j < sz(quer) && quer[j][0] == quer[i][0])
+            j++;
+
+        batches.push_back({i, j});
+        i = j;
     }
 
-    for (int i = 0; i < n; i++) {
-        BC[i] /= (double)k;
+    vector<vector<double>> partialBC(threads, vector<double>(n, 0.0));
+
+#pragma omp parallel num_threads(threads)
+    {
+        int tid = omp_get_thread_num();
+
+        BfsData source(sz(temporalGraph));
+        BfsData finish(sz(temporalGraph));
+
+#pragma omp for schedule(dynamic)
+        for (int b = 0; b < sz(batches); b++) {
+            auto [l, r] = batches[b];
+
+            int s = quer[l][0];
+
+            mt19937_64 rng(random_device{}());
+
+            for (int i = l; i < r; i++) {
+                auto [s, t, c] = quer[i];
+                uniformPathSampling(source, finish, s, t, c,partialBC[tid], rng);
+            }
+        }
+    }
+
+    for (int tid = 0; tid < threads; tid++) {
+        for (int i = 0; i < n; i++) {
+            BC[i] += partialBC[tid][i];
+        }
+    }
+    for (double& x : BC) {
+        x /= double(k);
     }
 
     return BC;
@@ -301,12 +338,31 @@ void bfs(int v, vector<double> &BC, double coef = 1.0) {
     }
 }
 
-vector<double> calcExactBC(bool normalize = false) {
+vector<double> calcExactBC(bool normalize = false, int threads = 1) {
     int n = sz(vertexAllTimes);
-    vector<double> BC(n, 0);
-    for (int i = 0; i < n; i++) {
-        bfs(i, BC);
+
+    vector<vector<double>> partialBC(
+       threads, vector<double>(n, 0.0)
+   );
+
+#pragma omp parallel num_threads(threads)
+    {
+        int tid = omp_get_thread_num();
+
+#pragma omp for schedule(dynamic)
+        for (int i = 0; i < n; i++) {
+            bfs(i, partialBC[tid]);
+        }
     }
+
+    vector<double> BC(n, 0.0);
+
+    for (int tid = 0; tid < threads; tid++) {
+        for (int i = 0; i < n; i++) {
+            BC[i] += partialBC[tid][i];
+        }
+    }
+
     if (normalize) {
         for (int i = 0; i < n; i++) {
             double coef = 1.0 / ((double)(n) * (n - 1));
@@ -316,36 +372,7 @@ vector<double> calcExactBC(bool normalize = false) {
     return BC;
 }
 
-double getMaxError(vector<double> &exactBC, vector<double> &approximateBC) {
-    double res = 0;
-    for (int i = 0; i < (int)exactBC.size(); i++) {
-        res = max(res, abs(exactBC[i] - approximateBC[i]));
-    }
-    return res;
-}
-
-double getMaeError(vector<double> &exactBC, vector<double> &approximateBC) {
-    double res = 0;
-    for (int i = 0; i < (int)exactBC.size(); i++) {
-        res += abs(exactBC[i] - approximateBC[i]);
-    }
-    res /= (double)(exactBC.size());
-    return res;
-}
-
-double getRmseError(vector<double> &exactBC, vector<double> &approximateBC) {
-    double res = 0;
-    for (int i = 0; i < (int)exactBC.size(); i++) {
-        double delta = abs(exactBC[i] - approximateBC[i]);
-        res += delta * delta;
-    }
-    res /= (double)(exactBC.size());
-    res = sqrt(res);
-    return res;
-}
-
-
-void processedDynamic(string filename, int k) {
+void processedDynamic(string filename, int k, int threads = 1) {
     ifstream in(filename);
     string line;
     getline(in, line);
@@ -416,7 +443,6 @@ void processedDynamic(string filename, int k) {
         }
         for (auto [t1, id_x] : vertexAllTimes[x]) {
             if (t1 >= t) continue;
-            // cerr << x << ' ' << y << ' ' << t1 << '\n';
             temporalGraph[id_x].push_back(idy);
             numberEdges++;
         }
@@ -431,54 +457,27 @@ void processedDynamic(string filename, int k) {
         }
     }
 
-    cout << "base version" << endl;
-    cout << "vertex graph :" << N << endl;
-    cout << "edge graph :" << numberEdges << endl;
     auto start = chrono::steady_clock::now();
-    vector<double> approximateBC = calcBC(k);
+    vector<double> approximateBC = calcBC(k, threads);
     auto finish = chrono::steady_clock::now();
-    vector<double> exactBC = calcExactBC(true);
-    setprecision(6);
-    cout << fixed << "Time propability approximate BC in second : " << std::chrono::duration<double>(finish - start).count() << '\n';
-    cout << fixed << "K : " << k << '\n';
-    cout << fixed << "Max absolute error: " << getMaxError(exactBC, approximateBC) << '\n';
-    cout << fixed << "MAE error: " << getMaeError(exactBC, approximateBC) << '\n';
-    cout << fixed << "RMSE error: " << getRmseError(exactBC, approximateBC) << '\n';
+    double peakRAM = Statistic::getPeakRAM();
+    vector<double> exactBC = calcExactBC(true, threads);
+    string nameAlgo = "TBC-uniform-path-sampling-optimized";
+    Statistic::getAllStatistic(filename, nameAlgo, threads, exactBC, approximateBC, peakRAM, std::chrono::duration<double>(finish - start).count(), k);
 }
 
 int main(int argc, char* argv[]) {
     string filename = "";
-    int k;
-    if (argc < 3) {
-        filename = "../Graphs/Temporary/1_06_college_msg.patg";
+    int k, threads;
+    if (argc < 4) {
+        threads = 4;
         k = 10000;
+        filename = "../Graphs/Temporary/1_06_college_msg.patg";
     } else {
         filename = argv[1];
         k = stoi(argv[2]);
+        threads = stoi(argv[3]);
     }
-    processedDynamic(filename, k);
-
+    processedDynamic(filename, k, threads);
     return 0;
 }
-
-/*
-Max absolute error: 205412.121997
-MAE error: 1160.501111
-RMSE error: 6662.075202
-
-==================================
-Optimized
-Time propability approximate BC in second : 4.972880
-K : 10000
-Max absolute error: 0.003211
-MAE error: 0.000112
-RMSE error: 0.000266
-===================================
-Base
-Time propability approximate BC in second : 21.149011
-K : 10000
-Max absolute error: 0.003749
-MAE error: 0.000109
-RMSE error: 0.000262
-
- */

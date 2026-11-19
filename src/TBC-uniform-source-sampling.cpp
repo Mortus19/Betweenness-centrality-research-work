@@ -1,9 +1,4 @@
-#include <bits/stdc++.h>
-using namespace std;
-
-#define all(x) x.begin(), x.end()
-#define sz(x) (int)x.size()
-#define debug(x) cerr << __LINE__ << ": " << #x << " = " << (x) << endl
+#include "StatisticTools.h"
 
 vector<vector<int>> temporalGraph;
 vector<vector<pair<int, int>>> vertexAllTimes; //для вершины храним {время входа, индекс в графе}
@@ -95,15 +90,16 @@ void bfs(int v, vector<double> &BC, double coef = 1.0) {
     }
 }
 
-vector<double> calcBC(bool normalize = false, int k = 1) {
+vector<double> calcBC(bool normalize = false, int k = 1, int threads = 1) {
     int n = sz(vertexAllTimes);
     k = min(k, n);
     vector<double> BC(n, 0);
     double coef = (double)n / (double)k;
     vector<int> order(n, 0);
     iota(order.begin(), order.end(), 0);
-    mt19937_64 rng;
+    mt19937_64 rng(random_device{}());
     shuffle(order.begin(), order.end(), rng);
+#pragma omp parallel for num_threads(threads)
     for (int i = 0; i < k; i++) {
         bfs(order[i], BC, coef);
     }
@@ -116,9 +112,10 @@ vector<double> calcBC(bool normalize = false, int k = 1) {
     return BC;
 }
 
-vector<double> calcExactBC(bool normalize = false) {
+vector<double> calcExactBC(bool normalize = false, int threads = 1) {
     int n = sz(vertexAllTimes);
     vector<double> BC(n, 0);
+#pragma omp parallel for num_threads(threads)
     for (int i = 0; i < n; i++) {
         bfs(i, BC);
     }
@@ -131,36 +128,9 @@ vector<double> calcExactBC(bool normalize = false) {
     return BC;
 }
 
-double getMaxError(vector<double> &exactBC, vector<double> &approximateBC) {
-    double res = 0;
-    for (int i = 0; i < (int)exactBC.size(); i++) {
-        res = max(res, abs(exactBC[i] - approximateBC[i]));
-    }
-    return res;
-}
-
-double getMaeError(vector<double> &exactBC, vector<double> &approximateBC) {
-    double res = 0;
-    for (int i = 0; i < (int)exactBC.size(); i++) {
-        res += abs(exactBC[i] - approximateBC[i]);
-    }
-    res /= (double)(exactBC.size());
-    return res;
-}
-
-double getRmseError(vector<double> &exactBC, vector<double> &approximateBC) {
-    double res = 0;
-    for (int i = 0; i < (int)exactBC.size(); i++) {
-        double delta = abs(exactBC[i] - approximateBC[i]);
-        res += delta * delta;
-    }
-    res /= (double)(exactBC.size());
-    res = sqrt(res);
-    return res;
-}
 
 
-void processedDynamic(string filename, int k) {
+void processedDynamic(string filename, int k, int threads = 1) {
     ifstream in(filename);
     string line;
     getline(in, line);
@@ -228,64 +198,30 @@ void processedDynamic(string filename, int k) {
         }
         for (auto [t1, id_x] : vertexAllTimes[x]) {
             if (t1 >= t) continue;
-            // cerr << x << ' ' << y << ' ' << t1 << '\n';
             temporalGraph[id_x].push_back(idy);
             numberEdges++;
         }
     }
 
-    cout << "base version" << endl;
-    cout << "vertex graph :" << N << endl;
-    cout << "edge graph :" << numberEdges << endl;
     auto start = chrono::steady_clock::now();
-    vector<double> approximateBC = calcBC(true, k);
+    vector<double> approximateBC = calcBC(1, k, threads);
     auto finish = chrono::steady_clock::now();
-    vector<double> exactBC = calcExactBC(true);
-    setprecision(6);
-    cout << fixed << "Time approximate BC in second : " << std::chrono::duration<double>(finish - start).count() << '\n';
-    cout << fixed << "K : " << k << '\n';
-    cout << fixed << "Max absolute error: " << getMaxError(exactBC, approximateBC) << '\n';
-    cout << fixed << "MAE error: " << getMaeError(exactBC, approximateBC) << '\n';
-    cout << fixed << "RMSE error: " << getRmseError(exactBC, approximateBC) << '\n';
+    double peakRAM = Statistic::getPeakRAM();
+    vector<double> exactBC = calcExactBC(true, threads);
+    Statistic::getAllStatistic(filename, threads, exactBC, approximateBC, peakRAM, std::chrono::duration<double>(finish - start).count(), k);
+
 }
 
 int main(int argc, char* argv[]) {
     string filename = "";
-    int k;
+    int k, threads = 1;
     if (argc < 3) {
         filename = "../Graphs/Temporary/1_06_college_msg.patg";
-        k = 300;
+        k = 500;
     } else {
         filename = argv[1];
         k = stoi(argv[2]);
     }
-    processedDynamic(filename, k);
-
+    processedDynamic(filename, k, threads);
     return 0;
 }
-
-
-/*
-path-sampling
-Time propability approximate BC in second : 19.730937
-K : 10000
-Max absolute error: 0.003749
-MAE error: 0.000109
-RMSE error: 0.000262
-
-uniform-source-sampling
-Time approximate BC in second : 3.364183
-K : 300
-Max absolute error: 0.006165
-MAE error: 0.000182
-RMSE error: 0.000508
-
-probability-source-sampling
-Time propability approximate BC in second : 6.857541
-K : 10000
-Max absolute error: 0.056991
-MAE error: 0.000322
-RMSE error: 0.001848
-
-
-*/

@@ -40,7 +40,7 @@ target_link_libraries(TBC-probability-source-sampling PUBLIC grAlgoLib)
 add_executable(TBC-uniform-path-sampling src/TBC-uniform-path-sampling.cpp)
 target_link_libraries(TBC-uniform-path-sampling PUBLIC grAlgoLib)
 
-add_executable(TBC-uniform-path-sampling-optimazed src/TBC-uniform-path-sampling-optimazed.cpp)
+add_executable(TBC-uniform-path-sampling-optimazed src/TBC-uniform-path-sampling-optimized.cpp)
 target_link_libraries(TBC-uniform-path-sampling-optimazed PUBLIC grAlgoLib)
 
 add_executable(TBC-uniform-path-sampling-optimized-vertex src/TBC-uniform-path-sampling-optimized-vertex.cpp)

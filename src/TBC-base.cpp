@@ -1,9 +1,6 @@
-#include <bits/stdc++.h>
-using namespace std;
+#include <omp.h>
 
-#define all(x) x.begin(), x.end()
-#define sz(x) (int)x.size()
-#define debug(x) cerr << __LINE__ << ": " << #x << " = " << (x) << endl
+#include "StatisticTools.h"
 
 vector<vector<int>> temporalGraph;
 vector<vector<pair<int, int>>> vertexAllTimes; //для вершины храним {время входа, индекс в графе}
@@ -95,13 +92,28 @@ void bfs(int v, vector<double> &BC) {
     }
 }
 
-vector<double> calcBC(bool normalize = false) {
+vector<double> calcBC(bool normalize = false, int threads = 1) {
     int n = sz(vertexAllTimes);
-    vector<double> BC(n, 0);
-    // cerr << "In BC" << endl;
-    for (int i = 0; i < n; i++) {
-        // cerr << "vertex :" << i << endl;
-        bfs(i, BC);
+    vector<vector<double>> partialBC(
+        threads, vector<double>(n, 0.0)
+    );
+
+#pragma omp parallel num_threads(threads)
+    {
+        int tid = omp_get_thread_num();
+
+        #pragma omp for schedule(dynamic)
+        for (int i = 0; i < n; i++) {
+            bfs(i, partialBC[tid]);
+        }
+    }
+
+    vector<double> BC(n, 0.0);
+
+    for (int tid = 0; tid < threads; tid++) {
+        for (int i = 0; i < n; i++) {
+            BC[i] += partialBC[tid][i];
+        }
     }
     if (normalize) {
         for (int i = 0; i < n; i++) {
@@ -112,7 +124,7 @@ vector<double> calcBC(bool normalize = false) {
     return BC;
 }
 
-void processedDynamic(string filename) {
+void processedDynamic(string filename, int threads = 1) {
     ifstream in(filename);
     string line;
     getline(in, line);
@@ -125,7 +137,6 @@ void processedDynamic(string filename) {
             continue;
         }
         array<int, 3> edge;
-        // u v t
         ss >> edge[0] >> edge[1] >> edge[2];
         if (edge[0] == edge[1]) continue;
         edge[2]++;
@@ -180,35 +191,29 @@ void processedDynamic(string filename) {
         }
         for (auto [t1, id_x] : vertexAllTimes[x]) {
             if (t1 >= t) continue;
-            // cerr << x << ' ' << y << ' ' << t1 << '\n';
             temporalGraph[id_x].push_back(idy);
             numberEdges++;
         }
     }
 
-    cout << "base version" << endl;
-    cout << "vertex graph :" << N << endl;
-    cout << "edge graph :" << numberEdges << endl;
     auto start = chrono::steady_clock::now();
-    vector<double> BC = calcBC();
+    vector<double> BC = calcBC(true, threads);
     auto finish = chrono::steady_clock::now();
-    setprecision(6);
-    cout << fixed << "Time in second : " << std::chrono::duration<double>(finish - start).count() << '\n';
+    double peakRAM = Statistic::getPeakRAM();
+    string nameAlgo = "TBC-base";
+    Statistic::getAllStatistic(filename, nameAlgo, threads, peakRAM, std::chrono::duration<double>(finish - start).count());
 }
 
 int main(int argc, char* argv[]) {
-    // if (argc < 2) {
-    //     cout << "No filename for launch" << endl;
-    //     return 0;
-    // }
-    // string filename = argv[1];
-
-    vector<string> filenameData = {
-        "../Graphs/Temporary/1_06_college_msg.patg",
-        "../Graphs/Temporary/1_02_hospital_ward.patg",
-    };
-    string filename = filenameData[0];
-    processedDynamic(filename);
-
+    string filename;
+    int threads = 1;
+    if (argc < 3) {
+        threads = 4;
+        filename = "../Graphs/Temporary/1_06_college_msg.patg";
+    } else {
+        threads = atoi(argv[1]);
+        filename = argv[2];
+    }
+    processedDynamic(filename, threads);
     return 0;
 }

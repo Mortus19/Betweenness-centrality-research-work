@@ -12,6 +12,21 @@ vector<int> vToCompressed, compressedTov;
 
 vector<vector<int>> g;
 vector<vector<int>> rg;
+struct GraphCSR {
+    vector<int> offset, to;
+    void fromAdj(const vector<vector<int>>& adj) {
+        offset.resize(adj.size() + 1);
+        offset[0] = 0;
+        for (size_t v=0;v<adj.size();++v) offset[v+1] = offset[v] + (int)adj[v].size();
+        to.resize(offset.back());
+        for (size_t v=0;v<adj.size();++v) {
+            std::copy(adj[v].begin(),adj[v].end(),to.begin()+offset[v]);
+        }
+    }
+    int size() const {return (int)offset.size()-1;}
+};
+GraphCSR csrG, csrRG;
+
 
 vector<vector<pair<int, int>>> vertexAllTimes; //для вершины храним {время входа, индекс в графе}
 
@@ -22,7 +37,8 @@ constexpr int INF = 1e9;
 
 struct BfsData {
     int depth, start;
-    vector<int> dist, changedVertex, layerVertex;
+    uint64_t frontCost = 0;
+    vector<int> dist, changedVertex, layerVertex, nextLayer;
     vector<double> sigma;
     BfsData(int size = 0) {
         start = -1;
@@ -30,14 +46,18 @@ struct BfsData {
         sigma.assign(size, 0);
         depth = 0;
         changedVertex.reserve(size);
+        layerVertex.reserve(size);
+        nextLayer.reserve(size);
     }
     void setTarget(int t) {
         depth = 0;
+        frontCost = 0;
         for (int i = 1; i < sz(reducedTimes[t]); i++) {
             int id = reducedTimes[t][i];
             dist[id] = 0;
             sigma[id] = 1;
             layerVertex.push_back(id);
+            frontCost += csrRG.offset[id+1]-csrRG.offset[id];
             changedVertex.push_back(id);
         }
     }
@@ -46,34 +66,41 @@ struct BfsData {
         sigma[x] = 1;
         start = x;
         depth = 0;
-        layerVertex = {x};
+        layerVertex.clear(); layerVertex.push_back(x);
+        frontCost = csrG.offset[x+1]-csrG.offset[x];
         changedVertex.push_back(x);
     }
     void clear() {
         depth = 0;
         start = -1;
+        frontCost = 0;
         for (auto id : changedVertex) {
             dist[id] = INF;
             sigma[id] = 0;
         }
         layerVertex.clear();
+        nextLayer.clear();
         changedVertex.clear();
     }
 };
 
-void expandLayer(BfsData &data, vector<vector<int>> &graph, vector<int> &otherDist, int& bestDist) {
+void expandLayer(BfsData &data, const GraphCSR &graph, const vector<int> &otherDist, int& bestDist) {
     vector<int>& dist = data.dist;
     vector<double>& sigma = data.sigma;
     data.depth++;
-    vector<int> nlayer;
+    auto& nlayer = data.nextLayer;
+    nlayer.clear();
+    uint64_t newCost = 0;
     for (auto x : data.layerVertex) {
         double waysX = sigma[x] * duplicate[x];
-        for (auto y : graph[x]) {
+        for(int p=graph.offset[x];p<graph.offset[x+1];++p) {
+            int y=graph.to[p];
             if (dist[y] > dist[x] + 1) {
                 dist[y] = dist[x] + 1;
                 sigma[y] = waysX;
                 data.changedVertex.push_back(y);
                 nlayer.push_back(y);
+                newCost += graph.offset[y+1]-graph.offset[y];
                 if (otherDist[y] != INF) {
                     bestDist = min(bestDist, otherDist[y] + dist[y]);
                 }
@@ -84,6 +111,7 @@ void expandLayer(BfsData &data, vector<vector<int>> &graph, vector<int> &otherDi
         }
     }
     swap(nlayer, data.layerVertex);
+    data.frontCost = newCost;
 }
 
 
@@ -109,10 +137,10 @@ void uniformPathSampling(BfsData &source, BfsData &finish, int s, int t, int c, 
             return;
         }
 
-        if (source.depth <= finish.depth) {
-            expandLayer(source, g, finish.dist, bestDist);
+        if (source.frontCost <= finish.frontCost) {
+            expandLayer(source, csrG, finish.dist, bestDist);
         } else {
-            expandLayer(finish, rg, source.dist, bestDist);
+            expandLayer(finish, csrRG, source.dist, bestDist);
         }
     }
     if (bestDist == INF) return;
@@ -140,7 +168,8 @@ void uniformPathSampling(BfsData &source, BfsData &finish, int s, int t, int c, 
                 BC[compressedTov[tv]] += 1;
                 cand.clear();
                 wcand.clear();
-                for (auto y : rg[tv]) {
+                for(int p=csrRG.offset[tv]; p<csrRG.offset[tv+1]; ++p) {
+                    int y = csrRG.to[p];
                     if (source.dist[y] + 1 == source.dist[tv]) {
                         cand.push_back(y);
                         wcand.push_back(source.sigma[y] * duplicate[y]);
@@ -159,7 +188,8 @@ void uniformPathSampling(BfsData &source, BfsData &finish, int s, int t, int c, 
             while (finish.dist[tv] > 0) {
                 cand.clear();
                 wcand.clear();
-                for (auto y : g[tv]) {
+                for(int p=csrG.offset[tv]; p<csrG.offset[tv+1]; ++p) {
+                    int y = csrG.to[p];
                     if (finish.dist[y] + 1 == finish.dist[tv]) {
                         cand.push_back(y);
                         wcand.push_back(finish.sigma[y] * duplicate[y]);
@@ -174,33 +204,45 @@ void uniformPathSampling(BfsData &source, BfsData &finish, int s, int t, int c, 
     }
 }
 
-vector<double> calcBC(int k = 1, int threads = 1) {
+vector<double> calcBC(int k, int threads, uint64_t seed) {
     int n = sz(vertexAllTimes);
+    if (n < 2) throw invalid_argument("The graph needs at least two vertices");
     vector<double> BC(n, 0);
-    mt19937_64 rng(random_device{}());
+    mt19937_64 rng(seed);
     vector<array<int, 3>> quer;
-    {
-        uniform_int_distribution<int> dis(0, n - 1);
-        vector<pair<int, int>> q;
+    uniform_int_distribution<int> dis(0, n - 1);
+
+    // Large K on moderate-size graphs: count pairs without materializing K pairs.
+    // Pairs are emitted in the same lexicographic order as the sorting approach.
+    int64_t cells = int64_t(n) * n;
+    if (k >= 250'000 && cells <= 10'000'000LL) {
+        vector<int> counts(size_t(cells), 0);
         for (int i = 0; i < k; i++) {
-            int s = dis(rng);
-            int t = dis(rng);
-            while (s == t) {
-                t = dis(rng);
+            int s = dis(rng), t = dis(rng);
+            while (s == t) t = dis(rng);
+            counts[size_t(s) * n + t]++;
+        }
+        for (int s = 0; s < n; s++) {
+            for (int t = 0; t < n; t++) {
+                int c = counts[size_t(s) * n + t];
+                if (c) quer.push_back({s, t, c});
             }
-            q.push_back({s, t});
+        }
+    } else {
+        vector<pair<int, int>> q;
+        q.reserve(k);
+        for (int i = 0; i < k; i++) {
+            int s = dis(rng), t = dis(rng);
+            while (s == t) t = dis(rng);
+            q.emplace_back(s, t);
         }
         sort(all(q));
-        int cnt = 1;
-        for (int i = 1; i < sz(q); i++) {
-            if (q[i] == q[i - 1]) {
-                cnt++;
-            } else {
-                quer.push_back({q[i - 1].first, q[i - 1].second, cnt});
-                cnt = 1;
-            }
+        for (int i = 0; i < sz(q); ) {
+            int j = i + 1;
+            while (j < sz(q) && q[j] == q[i]) j++;
+            quer.push_back({q[i].first, q[i].second, j - i});
+            i = j;
         }
-        quer.push_back({q.back().first, q.back().second, cnt});
     }
 
     vector<pair<int, int>> batches;
@@ -221,8 +263,8 @@ vector<double> calcBC(int k = 1, int threads = 1) {
     {
         int tid = omp_get_thread_num();
 
-        BfsData source(sz(g));
-        BfsData finish(sz(rg));
+        BfsData source(csrG.size());
+        BfsData finish(csrRG.size());
 
 #pragma omp for schedule(dynamic)
         for (int b = 0; b < sz(batches); b++) {
@@ -230,7 +272,7 @@ vector<double> calcBC(int k = 1, int threads = 1) {
 
             int s = quer[l][0];
 
-            mt19937_64 rng(random_device{}());
+            mt19937_64 rng(seed + 0x9e3779b97f4a7c15ULL * uint64_t(s + 1));
 
             for (int i = l; i < r; i++) {
                 auto [s, t, c] = quer[i];
@@ -253,7 +295,7 @@ vector<double> calcBC(int k = 1, int threads = 1) {
 
 void bfs(int v, vector<double> &BC) {
 
-    int n = sz(g);
+    int n = csrG.size();
 
     vector<int> dist(n, INF);
     vector<int> order;
@@ -273,7 +315,8 @@ void bfs(int v, vector<double> &BC) {
         order.push_back(x);
         q.pop();
         double waysX = sigma[x] * duplicate[x];
-        for (auto y : g[x]) {
+        for(int p=csrG.offset[x];p<csrG.offset[x+1];++p) {
+            int y=csrG.to[p];
             if (blocked[y]) continue;
             if (dist[y] > dist[x] + 1) {
                 dist[y] = dist[x] + 1;
@@ -362,8 +405,9 @@ vector<double> calcExactBC(bool normalize = false, int threads = 1) {
     return BC;
 }
 
-void processedDynamic(string filename, int k, int threads) {
+void processedDynamic(const string& filename, int k, int threads, uint64_t seed, bool noExact, const string& outputCSV) {
     ifstream in(filename);
+    if (!in) throw runtime_error("Cannot open graph: " + filename);
     string line;
     getline(in, line);
     vector<array<int, 3>> edges;
@@ -499,21 +543,55 @@ void processedDynamic(string filename, int k, int threads) {
             rg[y].push_back(i);
         }
     }
+    csrG.fromAdj(g);
+    csrRG.fromAdj(rg);
+    vector<vector<int>>().swap(g);
+    vector<vector<int>>().swap(rg);
+    vector<vector<int>>().swap(temporalGraph);
+    vector<vector<int>>().swap(reversedTemporalGraph);
+    vector<int>().swap(vToCompressed);
     auto start = chrono::steady_clock::now();
-    vector<double> approximateBC = calcBC(k, threads);
+    vector<double> approximateBC = calcBC(k, threads, seed);
     auto finish = chrono::steady_clock::now();
     double peakRAM = Statistic::getPeakRAM();
-    vector<double> exactBC = calcExactBC(true, threads);
-    string nameAlgo = "TBC-uniform-path-sampling-optimized-vertex";
-    Statistic::getAllStatistic(filename, nameAlgo, threads, exactBC, approximateBC, peakRAM, std::chrono::duration<double>(finish - start).count(), k);
+        vector<double> exactBC;
+    if (!noExact) exactBC = calcExactBC(true, threads);
+    if (!outputCSV.empty()) {
+        ofstream fout(outputCSV);
+        if (!fout) throw runtime_error("Cannot write result file: " + outputCSV);
+        fout << setprecision(17);
+        for (double val : approximateBC) fout << val << '\n';
+    }
+
+    const double elapsed = chrono::duration<double>(finish - start).count();
+    const string nameAlgo = "TBC-uniform-path-sampling-optimized-vertex-CSR";
+    if (noExact) {
+        cout << setprecision(10)
+             << "Algo                : " << nameAlgo << '\n'
+             << "Dataset             : " << filename << '\n'
+             << "Threads             : " << threads << '\n'
+             << "Samples (K)         : " << k << '\n'
+             << "Execution time (s)  : " << elapsed << '\n'
+             << "Peak RAM (MiB)      : " << peakRAM << '\n'
+             << "BC sum normalized   : " << accumulate(approximateBC.begin(), approximateBC.end(), 0.0) << '\n';
+    } else {
+        Statistic::getAllStatistic(filename, nameAlgo, threads, exactBC, approximateBC, peakRAM, elapsed, k);
+    }
+}
+
+// Backward-compatible wrapper: keep the original three-argument interface.
+void processedDynamic(const string& filename, int k, int threads) {
+    random_device rd;
+    uint64_t seed = (uint64_t(rd()) << 32) ^ uint64_t(rd());
+    processedDynamic(filename, k, threads, seed, false, "");
 }
 
 int main(int argc, char* argv[]) {
     string filename = "";
     int k, threads;
     if (argc < 4) {
-        threads = 6;
-        k = 100000;
+        threads = 4;
+        k = 1000000;
         filename = "../Graphs/Temporary/1_06_college_msg.patg";
     } else {
         filename = argv[1];

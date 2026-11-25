@@ -12,6 +12,7 @@ vector<int> vToCompressed, compressedTov;
 
 vector<vector<int>> g;
 vector<vector<int>> rg;
+vector<int> parentOffset;
 
 vector<vector<pair<int, int>>> vertexAllTimes; //для вершины храним {время входа, индекс в графе}
 
@@ -20,42 +21,88 @@ constexpr int MAX_TIME = 1e9;
 
 constexpr int INF = 1e9;
 
-void bfs(int v, vector<double> &BC) {
-    int n = sz(g);
+struct BfsData {
+    vector<int> dist, order, marked, layer, nextLayer;
+    vector<double> delta, sigma, weights;
+    vector<int> parentCount;
+    vector<int> parent;
+    BfsData(int n, int64_t numEdges)
+        : dist(n, INF),
+          marked(n, 0),
+          delta(n, 0),
+          sigma(n, 0),
+          weights(n, 0),
+          parentCount(n, 0)
+    {
+        layer.reserve(n);
+        nextLayer.reserve(n);
+        parent.resize(numEdges);
+        order.reserve(n);
+    }
 
-    vector<int> dist(n, INF);
-    vector<int> order;
-    vector<int> marked(n, 0), blocked(n, 0);
-    vector<double> delta(n, 0), sigma(n, 0), weights(n, 0);
-    vector<vector<int>> parents(n);
+    void clear() {
+        for (int x : order) {
+            dist[x] = INF;
+            marked[x] = 0;
+            delta[x] = 0;
+            sigma[x] = 0;
+            weights[x] = 0;
+            parentCount[x] = 0;
+        }
+        order.clear();
+    }
+    void addParent(int x, int y) {
+        parent[parentOffset[x] + parentCount[x]] = y;
+        parentCount[x]++;
+    }
+};
+
+
+void bfs(int v, vector<double> &BC, BfsData& data) {
+    data.clear();
+
+    auto& dist = data.dist;
+    auto& order = data.order;
+    auto& marked = data.marked;
+    auto& delta = data.delta;
+    auto& sigma = data.sigma;
+    auto& weights = data.weights;
+
+    auto& layer = data.layer;
+    auto& nextLayer = data.nextLayer;
 
     int startv = reducedTimes[v][0];
     dist[startv] = 0;
-    delta[startv] = 0;
     sigma[startv] = 1;
 
-    queue<int> q;
-    q.push(startv);
-    while (!q.empty()) {
-        int x = q.front();
-        order.push_back(x);
-        q.pop();
-        double waysX = sigma[x] * duplicate[x];
-        for (auto y : g[x]) {
-            if (blocked[y]) continue;
-            if (dist[y] > dist[x] + 1) {
-                dist[y] = dist[x] + 1;
-                parents[y].clear();
-                sigma[y] = waysX;
-                q.push(y);
-            }
-            else if (dist[y] == dist[x] + 1) {
-                sigma[y] += waysX;
-            }
-            if (dist[y] == dist[x] + 1) {
-                parents[y].push_back(x);
+    layer.push_back(startv);
+
+    int nd = 1;
+
+    while (!layer.empty()) {
+        for (int x : layer) {
+            order.push_back(x);
+
+            double waysX = sigma[x] * duplicate[x];
+
+            for (int y : g[x]) {
+                if (dist[y] == INF) {
+                    dist[y] = nd;
+                    sigma[y] = waysX;
+
+                    nextLayer.push_back(y);
+                    data.addParent(y, x);
+                }
+                else if (dist[y] == nd) {
+                    sigma[y] += waysX;
+                    data.addParent(y, x);
+                }
             }
         }
+
+        layer.swap(nextLayer);
+        nextLayer.clear();
+        nd++;
     }
     for (int i = 0; i < sz(reducedTimes); i++) {
         if (i == v) continue;
@@ -80,11 +127,16 @@ void bfs(int v, vector<double> &BC) {
 
     for (int i = sz(order) - 1; i >= 0; i--) {
         int x = order[i];
-        for (auto y : parents[x]) {
-            delta[y] += duplicate[y] * (sigma[y] / sigma[x]) * delta[x];
-            if (marked[x]) {
-                delta[y] += duplicate[x] * duplicate[y] * (sigma[y] / weights[x]);
-            }
+
+        double factor = delta[x] / sigma[x];
+
+        if (marked[x]) {
+            factor += double(duplicate[x]) / weights[x];
+        }
+
+        for (int j = 0; j < data.parentCount[x]; j++) {
+            int y = data.parent[parentOffset[x] + j];
+            delta[y] += double(duplicate[y]) * sigma[y] * factor;
         }
     }
 
@@ -102,14 +154,23 @@ vector<double> calcBC(bool normalize = false, int threads = 1) {
     vector<vector<double>> partialBC(
         threads, vector<double>(n, 0.0)
     );
-
+    int64_t numEdges = 0;
+    parentOffset.resize(sz(rg));
+    parentOffset[0] = 0;
+    for (int i = 1; i < sz(rg); i++) {
+        parentOffset[i] = parentOffset[i - 1] + sz(rg[i - 1]);
+    }
+    for (int i = 0; i < sz(g); i++) {
+        numEdges += sz(g[i]);
+    }
 #pragma omp parallel num_threads(threads)
     {
         int tid = omp_get_thread_num();
 
+        BfsData data(sz(g), numEdges);
 #pragma omp for schedule(dynamic)
         for (int i = 0; i < n; i++) {
-            bfs(i, partialBC[tid]);
+            bfs(i, partialBC[tid], data);
         }
     }
 
@@ -273,6 +334,7 @@ void processedDynamic(string filename, int threads = 1) {
     auto finish = chrono::steady_clock::now();
     double peakRAM = Statistic::getPeakRAM();
     string nameAlgo = "TBC-optimized-only-vertex";
+
     Statistic::getAllStatistic(filename, nameAlgo, threads, peakRAM, std::chrono::duration<double>(finish - start).count());
 }
 

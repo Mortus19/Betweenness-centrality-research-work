@@ -7,16 +7,55 @@ vector<vector<pair<int, int>>> vertexAllTimes; //для вершины хран�
 constexpr int MIN_TIME = 0;
 constexpr int INF = 1e9;
 
-void bfs(int v, vector<double> &BC) {
+
+struct BfsData {
+    vector<int> dist, order, marked, blocked;
+    vector<double> delta, sigma, weights;
+    vector<vector<int>> parents;
+
+    BfsData(int n)
+        : dist(n, INF),
+          marked(n, 0),
+          blocked(n, 0),
+          delta(n, 0),
+          sigma(n, 0),
+          weights(n, 0),
+          parents(n)
+    {
+        order.reserve(n);
+    }
+
+    void clear() {
+        fill(dist.begin(), dist.end(), INF);
+        fill(marked.begin(), marked.end(), 0);
+        fill(blocked.begin(), blocked.end(), 0);
+        fill(delta.begin(), delta.end(), 0.0);
+        fill(sigma.begin(), sigma.end(), 0.0);
+        fill(weights.begin(), weights.end(), 0.0);
+
+        order.clear();
+
+        for (auto& p : parents) {
+            p.clear();
+        }
+    }
+};
+
+
+void bfs(int v, vector<double> &BC, BfsData &data) {
+    data.clear();
+
+    auto& dist = data.dist;
+    auto& order = data.order;
+    auto& marked = data.marked;
+    auto& blocked = data.blocked;
+    auto& delta = data.delta;
+    auto& sigma = data.sigma;
+    auto& weights = data.weights;
+    auto& parents = data.parents;
+
 
     int n = sz(temporalGraph);
-    vector<int> dist(sz(temporalGraph), INF);
-
-    vector<int> order, marked(n, 0), blocked(n, 0);
-    vector<double> delta(n, 0);
-    vector<double> sigma(n, 0);
-    vector<double> weights(n, 0);
-    vector<vector<int>> parents(n);
 
     int startv = -1;
     for (auto [t1, idv] : vertexAllTimes[v]) {
@@ -101,10 +140,10 @@ vector<double> calcBC(bool normalize = false, int threads = 1) {
 #pragma omp parallel num_threads(threads)
     {
         int tid = omp_get_thread_num();
-
+        BfsData data(sz(temporalGraph));
         #pragma omp for schedule(dynamic)
         for (int i = 0; i < n; i++) {
-            bfs(i, partialBC[tid]);
+            bfs(i, partialBC[tid], data);
         }
     }
 
@@ -200,6 +239,9 @@ void processedDynamic(string filename, int threads = 1) {
     vector<double> BC = calcBC(true, threads);
     auto finish = chrono::steady_clock::now();
     double peakRAM = Statistic::getPeakRAM();
+    // cerr << "Total visited : " << totalVisited << endl;
+    // cerr << "Total scanned Edge: " << totalScannedEdges << endl;
+    // cerr << "Total parent edges : " << totalParentEdges << endl;
     string nameAlgo = "TBC-base";
     Statistic::getAllStatistic(filename, nameAlgo, threads, peakRAM, std::chrono::duration<double>(finish - start).count());
 }

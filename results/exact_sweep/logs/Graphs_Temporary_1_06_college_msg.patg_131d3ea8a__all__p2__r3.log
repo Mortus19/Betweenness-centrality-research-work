@@ -1,0 +1,9 @@
+COMMAND: C:\Users\poloz\Desktop\Personaly\NNSU\GraphsNNSU\Betweenness-centrality-research-work\cmake-build-release\TBC-optimized-all.exe 2 C:\Users\poloz\Desktop\Personaly\NNSU\GraphsNNSU\Betweenness-centrality-research-work\Graphs\Temporary\1_06_college_msg.patg
+
+Algo                : TBC-optimized-vertex-and-edges
+Dataset             : 1_06_college_msg.patg
+
+========== TBC STATISTICS ==========
+Threads             : : 2
+Execution time (s)  : 10.894111
+Peak RAM (MiB)      : 346.539062

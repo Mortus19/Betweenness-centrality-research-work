@@ -1,0 +1,12 @@
+COMMAND: julia --startup-file=no --threads=2 C:\Users\poloz\Desktop\Personaly\NNSU\GraphsNNSU\Betweenness-centrality-research-work\benchmarks\benchmark_exact_julia.jl C:\Users\poloz\Desktop\Personaly\NNSU\GraphsNNSU\Betweenness-centrality-research-work\Graphs\Temporary\1_06_college_msg.patg C:\Users\poloz\Desktop\Personaly\NNSU\GraphsNNSU\Betweenness-centrality-research-work\results\exact_sweep\julia_values\Graphs_Temporary_1_06_college_msg.patg_131d3ea8a.csv
+
+Dataset           : 1_06_college_msg.patg
+Algorithm         : Julia / TemporalGraphs.jl / MinimumHops (strict)
+Vertices          : 1899
+Temporal edges    : 59798
+Julia threads     : 2
+Preprocessing (s) : 0.060264
+Compute time (s)  : 3.438158
+Total (s)         : 3.498422 (excluding Julia startup and JIT warmup)
+BC sum normalized : 1.288813479
+Values saved     : C:\Users\poloz\Desktop\Personaly\NNSU\GraphsNNSU\Betweenness-centrality-research-work\results\exact_sweep\julia_values\Graphs_Temporary_1_06_college_msg.patg_131d3ea8a.csv

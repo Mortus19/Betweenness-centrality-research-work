@@ -1,0 +1,2 @@
+dataset,algorithm,julia_version,threads,n,m,preprocess_s,compute_s,total_s,values_file
+"1_06_college_msg.patg","TemporalGraphs.jl MinimumHops strict","1.13.4",4,1899,59798,0.060745400,1.830851100,1.891596500,"C:\Users\poloz\Desktop\Personaly\NNSU\GraphsNNSU\Betweenness-centrality-research-work\julia_exact.csv"

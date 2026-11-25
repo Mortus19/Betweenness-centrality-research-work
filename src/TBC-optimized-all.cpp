@@ -31,6 +31,8 @@ constexpr int MIN_TIME = 0;
 constexpr int MAX_TIME = 1e9;
 constexpr int INF = 1e9;
 vector<int> zeroTopoOrder;
+vector<int> csrOffset, parentOffset;
+vector<Edge> csrEdges;
 
 void buildZeroTopoOrder() {
     int n = sz(g);
@@ -71,227 +73,230 @@ void buildZeroTopoOrder() {
             }
         }
     }
+    if (sz(zeroTopoOrder) != n) {
+        throw runtime_error("The zero-weight subgraph is not acyclic");
+    }
 }
 
-vector<int> buildProcessingOrder(const vector<int> &dist, const vector<int> &blocked) {
-    int maxDist = 0;
 
-    for (int v = 0; v < sz(dist); v++) {
-        if (!blocked[v] && dist[v] != INF) {
-            maxDist = max(maxDist, dist[v]);
-        }
+// Prepare contiguous adjacency and a fixed slot range for each vertex's predecessors.
+void buildCSR() {
+    const int n = sz(g);
+    csrOffset.assign(n + 1, 0);
+    for (int i = 0; i < n; ++i) {
+        csrOffset[i + 1] = csrOffset[i] + sz(g[i]);
+    }
+    csrEdges.resize(csrOffset[n]);
+    for (int i = 0; i < n; ++i) {
+        copy(g[i].begin(), g[i].end(), csrEdges.begin() + csrOffset[i]);
     }
 
-    vector<vector<int>> buckets(maxDist + 1);
-
-    for (int v : zeroTopoOrder) {
-        if (!blocked[v] && dist[v] != INF) {
-            buckets[dist[v]].push_back(v);
-        }
+    parentOffset.assign(n + 1, 0);
+    for (const Edge& e : csrEdges) {
+        ++parentOffset[e.to + 1];
+    }
+    for (int i = 0; i < n; ++i) {
+        parentOffset[i + 1] += parentOffset[i];
     }
 
-    vector<int> order;
-    order.reserve(sz(dist));
-
-    for (int d = 0; d <= maxDist; d++) {
-        for (int v : buckets[d]) {
-            order.push_back(v);
-        }
-    }
-
-    return order;
+    vector<vector<Edge>>().swap(g);
 }
 
-void bfs(int v, vector<double> &BC) {
+struct BfsData {
+    vector<int> dist, marked, blocked, order, visited, blockedNodes;
+    vector<int> layer, nextLayer, parentCount, parent;
+    vector<int> positions;
+    vector<double> sigma, endSigma, weights, propagate, bcLocal;
 
-    int n = sz(g);
+    BfsData(int n, size_t edges)
+        : dist(n, INF), marked(n, 0), blocked(n, 0),
+          parentCount(n, 0), parent(edges), positions(n + 1),
+          sigma(n, 0), endSigma(n, 0), weights(n, 0),
+          propagate(n, 0), bcLocal(n, 0) {
+        order.reserve(n);
+        visited.reserve(n);
+        layer.reserve(n);
+        nextLayer.reserve(n);
+        blockedNodes.reserve(n);
+    }
 
-    vector<int> order, marked, blocked, dist;
-    vector<double> bcLocal, propagate, delta, sigma, endSigma, weights;
-    vector<vector<pair<int, int>>> parents;
-    deque<int> q;
+    void clear() {
+        for (int x : visited) {
+            dist[x] = INF;
+            marked[x] = 0;
+            sigma[x] = 0;
+            endSigma[x] = 0;
+            weights[x] = 0;
+            propagate[x] = 0;
+            bcLocal[x] = 0;
+            parentCount[x] = 0;
+        }
+        for (int x : blockedNodes) blocked[x] = 0;
+        visited.clear();
+        blockedNodes.clear();
+        order.clear();
+        layer.clear();
+        nextLayer.clear();
+    }
+};
 
-    dist.assign(n, INF);
-    order.clear();
-    marked.assign(n, 0); blocked.assign(n, 0);
-    bcLocal.assign(n, 0); propagate.assign(n, 0);
-    sigma.assign(n, 0); endSigma.assign(n, 0); weights.assign(n, 0);
-    parents.assign(n, {});
-    /*
-    sigma[x]    — общее число способов дойти до сжатого экземпляра x для дальнейшего продолжения пути;
+void bfs(int v, vector<double>& BC, BfsData& data) {
+    data.clear();
 
-    endSigma[x] — число способов закончить путь именно в экземпляре x через настоящее temporal-ребро;
+    auto& dist = data.dist;
+    auto& marked = data.marked;
+    auto& blocked = data.blocked;
+    auto& sigma = data.sigma;
+    auto& endSigma = data.endSigma;
+    auto& weights = data.weights;
+    auto& propagate = data.propagate;
+    auto& bcLocal = data.bcLocal;
+    auto& order = data.order;
+    auto& layer = data.layer;
+    auto& nextLayer = data.nextLayer;
 
-    weights[x]  — число оптимальных temporal-путей до исходной вершины, считается через endSigma;
-
-    virtual edge — только передаёт возможность продолжения пути, но не создаёт новый endpoint-вклад.
-     */
     int startv = -1;
-
-    for (auto id : reducedTimes[v]) {
+    for (int id : reducedTimes[v]) {
         if (vertexData[id].timeL == MIN_TIME) {
             startv = id;
         } else {
             blocked[id] = 1;
+            data.blockedNodes.push_back(id);
         }
     }
 
     dist[startv] = 0;
     sigma[startv] = 1;
     endSigma[startv] = 1;
+    data.visited.push_back(startv);
+    layer.push_back(startv);
 
-    q.push_front(startv);
+    // 0/1 BFS by layers: zero-weight edges remain in this layer;
+    // unit-weight edges go to the next one. Stale entries are skipped.
+    int depth = 0;
+    while (!layer.empty()) {
+        for (size_t pos = 0; pos < layer.size(); ++pos) {
+            const int x = layer[pos];
+            if (dist[x] != depth) continue;
 
-    while (!q.empty()) {
-        int x = q.front();
-        q.pop_front();
-
-        for (auto e : g[x]) {
-            int y = e.to;
-            int w = e.w;
-
-            if (blocked[y]) continue;
-
-            if (dist[y] > dist[x] + w) {
-                dist[y] = dist[x] + w;
-
-                if (w == 0) {
-                    q.push_front(y);
-                } else {
-                    q.push_back(y);
+            for (int j = csrOffset[x]; j < csrOffset[x + 1]; ++j) {
+                const Edge e = csrEdges[j];
+                const int y = e.to;
+                if (blocked[y]) continue;
+                const int nd = depth + e.w;
+                if (nd < dist[y]) {
+                    if (dist[y] == INF) data.visited.push_back(y);
+                    dist[y] = nd;
+                    if (e.w == 0) layer.push_back(y);
+                    else nextLayer.push_back(y);
                 }
             }
         }
+        layer.swap(nextLayer);
+        nextLayer.clear();
+        ++depth;
     }
 
-    order = buildProcessingOrder(dist, blocked);
-    for (int i = 0; i < sz(order); i++) {
-        int x = order[i];
-
-        for (auto e : g[x]) {
-            int y = e.to;
-            int w = e.w;
-
-            if (blocked[y]) continue;
-
-            if (dist[y] == dist[x] + w) {
-                parents[y].push_back({x, w});
-
-                int mult = (w > 0 ? vertexData[y].instance : 1);
-
-                double waysX = sigma[x] * mult;
-
-                sigma[y] += waysX;
-
-                if (w > 0) {
-                    endSigma[y] += waysX;
-                }
-            }
+    // Counting sort by distance, retaining zero-edge topological order
+    // within each distance layer.
+    int maxDist = 0;
+    for (int x : data.visited) maxDist = max(maxDist, dist[x]);
+    fill(data.positions.begin(), data.positions.begin() + maxDist + 2, 0);
+    for (int x : data.visited) ++data.positions[dist[x] + 1];
+    for (int d = 1; d <= maxDist + 1; ++d) {
+        data.positions[d] += data.positions[d - 1];
+    }
+    order.resize(data.visited.size());
+    for (int x : zeroTopoOrder) {
+        if (dist[x] != INF) {
+            order[data.positions[dist[x]]++] = x;
         }
     }
 
-    for (int i = 0; i < sz(reducedTimes); i++) {
+    // Dynamic programming for shortest-path multiplicities and endpoints;
+    // parents use preallocated contiguous ranges, one range per destination.
+    for (int x : order) {
+        for (int j = csrOffset[x]; j < csrOffset[x + 1]; ++j) {
+            const Edge e = csrEdges[j];
+            const int y = e.to;
+            if (blocked[y] || dist[y] != dist[x] + e.w) continue;
+
+            data.parent[parentOffset[y] + data.parentCount[y]++] = x;
+            const double ways = sigma[x] * (e.w ? vertexData[y].instance : 1);
+            sigma[y] += ways;
+            if (e.w) endSigma[y] += ways;
+        }
+    }
+
+    for (int i = 0; i < sz(reducedTimes); ++i) {
         if (i == v) continue;
-
         int mindist = INF;
-
-        for (auto id : reducedTimes[i]) {
-            mindist = min(mindist, dist[id]);
-        }
-
+        for (int id : reducedTimes[i]) mindist = min(mindist, dist[id]);
         if (mindist == INF) continue;
 
         double totalWays = 0;
-
-        for (auto num : reducedTimes[i]) {
-            if (dist[num] == mindist) {
-                marked[num] = 1;
-                totalWays += endSigma[num];
+        for (int id : reducedTimes[i]) {
+            if (dist[id] == mindist) {
+                marked[id] = 1;
+                totalWays += endSigma[id];
             }
         }
-
-        for (auto num : reducedTimes[i]) {
-            if (marked[num]) {
-                weights[num] = totalWays;
-            }
+        for (int id : reducedTimes[i]) {
+            if (marked[id]) weights[id] = totalWays;
         }
     }
 
-    for (int i = sz(order) - 1; i >= 0; i--) {
-        int x = order[i];
+    for (int i = sz(order) - 1; i >= 0; --i) {
+        const int x = order[i];
+        const double baseFactor = sigma[x] > 0 ? propagate[x] / sigma[x] : 0.0;
+        const double endFactor = baseFactor + (marked[x] ? 1.0 / weights[x] : 0.0);
+        const int begin = parentOffset[x];
+        const int end = begin + data.parentCount[x];
 
-        for (auto [y, w] : parents[x]) {
-            int mult = (w > 0 ? vertexData[x].instance : 1);
-
-            double contrib = 0.0;
-
-            if (sigma[x] > 0) {
-                contrib +=
-                    (sigma[y] * mult / sigma[x]) * propagate[x];
-            }
-
-            if (w > 0 && marked[x]) {
-                contrib +=
-                    (sigma[y] * mult / weights[x]);
-            }
-
+        for (int j = begin; j < end; ++j) {
+            const int y = data.parent[j];
+            const int w = dist[x] - dist[y];
+            const double contrib = sigma[y] * (w ? vertexData[x].instance : 1)
+                                 * (w ? endFactor : baseFactor);
             propagate[y] += contrib;
-
-            if (w > 0) {
-                bcLocal[y] += contrib;
-            }
+            if (w) bcLocal[y] += contrib;
         }
     }
 
-    for (int i = 0; i < sz(reducedTimes); i++) {
+    for (int i = 0; i < sz(reducedTimes); ++i) {
         if (i == v) continue;
-
-        for (auto num : reducedTimes[i]) {
-            if (dist[num] != INF) {
-                BC[i] += bcLocal[num];
-            }
+        for (int id : reducedTimes[i]) {
+            if (dist[id] != INF) BC[i] += bcLocal[id];
         }
     }
 }
 
 vector<double> calcBC(bool normalize = false, int threads = 1) {
-    int n = sz(vertexAllTimes);
-
-
-    vector<vector<double>> partialBC(
-        threads, vector<double>(n, 0.0)
-    );
+    const int n = sz(vertexAllTimes);
+    vector<vector<double>> partialBC(threads, vector<double>(n, 0.0));
 
     #pragma omp parallel num_threads(threads)
     {
-        int tid = omp_get_thread_num();
-
+        const int tid = omp_get_thread_num();
+        BfsData data(sz(csrOffset) - 1, csrEdges.size());
         #pragma omp for schedule(dynamic)
-        for (int i = 0; i < n; i++) {
-            bfs(i, partialBC[tid]);
+        for (int i = 0; i < n; ++i) {
+            bfs(i, partialBC[tid], data);
         }
     }
 
     vector<double> BC(n, 0.0);
-
-    for (int tid = 0; tid < threads; tid++) {
-        for (int i = 0; i < n; i++) {
-            BC[i] += partialBC[tid][i];
-        }
+    for (int t = 0; t < threads; ++t) {
+        for (int i = 0; i < n; ++i) BC[i] += partialBC[t][i];
     }
-
     if (normalize) {
-        double coef = 1.0 / (double(n) * (n - 1));
-
-        for (int i = 0; i < n; i++) {
-            BC[i] *= coef;
-        }
+        const double coef = 1.0 / (double(n) * (n - 1));
+        for (double& x : BC) x *= coef;
     }
     return BC;
 }
 
-
-void processedDynamic(string filename, int threads = 1) {
+void processedDynamic(string filename, int threads = 1, string output = "") {
     ifstream in(filename);
     string line;
     getline(in, line);
@@ -449,10 +454,16 @@ void processedDynamic(string filename, int threads = 1) {
         reduceE++;
     }
     buildZeroTopoOrder();
+    buildCSR();
 
     auto start = chrono::steady_clock::now();
     vector<double> BC = calcBC(true, threads);
     auto finish = chrono::steady_clock::now();
+    if (!output.empty()) {
+        ofstream out(output);
+        out << setprecision(17);
+        for (int i = 0; i < sz(BC); ++i) out << i << "," << BC[i] << '\n';
+    }
     double peakRAM = Statistic::getPeakRAM();
     string nameAlgo = "TBC-optimized-vertex-and-edges";
     Statistic::getAllStatistic(filename, nameAlgo, threads, peakRAM, std::chrono::duration<double>(finish - start).count());
@@ -468,6 +479,6 @@ int main(int argc, char* argv[]) {
         threads = atoi(argv[1]);
         filename = argv[2];
     }
-    processedDynamic(filename, threads);
+    processedDynamic(filename, threads, argc > 3 ? argv[3] : "");
     return 0;
 }
